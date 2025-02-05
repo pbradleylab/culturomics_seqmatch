@@ -95,6 +95,8 @@ for (i in 1:length(trimmed)) {
   sangeranalyseR::writeFasta(x, outputDir = out_dir, compress = FALSE)
 }
 Sys.setenv(SANGER_OUT_DIR=file.path(getwd(), out_dir))
+vsearch_outfile = "./vsearch_output.txt"
+Sys.setenv(VSEARCH_OUT=vsearch_outfile)
 ```
 
 
@@ -103,7 +105,8 @@ Search with VSEARCH against database:
 ```{bash vsearch_run}
 
 ALL_SANGER_OUT="./concat_sanger_out.fa"
-VSEARCH_OUT="./vsearch_output.txt"
+#This is now set above
+#VSEARCH_OUT="./vsearch_output.txt"
 DATABASE="./data/ssu_all.fna"
 VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
 
@@ -119,7 +122,7 @@ $VSEARCH_PATH --usearch_global $ALL_SANGER_OUT --db $DATABASE --id 0.9 --blast6o
 
 blast6out_headers <- c("qseqid", "sseqid", "pident", "length", "mismatch","gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
 
-vsearch_results <- readr::read_tsv("./vsearch_output.txt",
+vsearch_results <- readr::read_tsv(vsearch_outfile,
                                    col_names=blast6out_headers,
                                    col_types="ccdddddddddd")
 
@@ -142,6 +145,7 @@ kableExtra::kbl(vsearch_processed) %>% kable_styling()
 ```{r visualize_alns}
 
 interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vsearch_processed) {
+  # maximum three tied alignments
   new_cols <- c("rgba(80,120,255,1)", "rgba(80,255,120,1)", "rgba(255,120,80)")
   l <- plotly::layout(
     sangeranalyseR::qualityBasePlot(trimmed_list[[name]]),
@@ -150,13 +154,14 @@ interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vs
   components <- map_chr(l$x$data, ~ .x$name)
   which_trimmed <- which(components=="Trimmed Read")
 
-  aln_read_coords <- dplyr::filter(vsearch, qseqid==name) %>% dplyr::select(Species, qstart, qend)
-  for (i in 1:nrow(aln_read_coords)) {
+  aln_read_coords <- dplyr::filter(vsearch, qseqid==name)
+  for (i in 1:(min(3, nrow(aln_read_coords)))) {
     aln_read <- l$x$data[[which_trimmed]]
     aln_read$name <- paste0("Aligned (", aln_read_coords[i, "Species"][[1]], ")")
     aln_read$line$color <- new_cols[i]
     aln_read$x <- aln_read$x[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]
     aln_read$y <- aln_read$y[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]+(i*3)
+    aln_read$text <- rep(paste0(aln_read_coords[["pident"]][i], "% ID<br>", aln_read_coords[["gtdb_taxonomy"]][i]), length(aln_read$x))
     n_comps <- length(l$x$data)
     l$x$data[[n_comps + i]] <- aln_read
   }

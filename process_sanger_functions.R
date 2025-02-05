@@ -39,11 +39,12 @@ load_and_trim <- function(data_dir="./seqs",
   
 }
 
-separate_taxonomy_with_s <- function(inpt, taxa_col) {
+separate_taxonomy_with_s <- function(inpt, taxa_col, remove=FALSE) {
   inpt <- inpt %>%
     tidyr::separate_wider_delim({{ taxa_col }},
                                 names = c("d", "p", "c", "o", "f", "g", "s"),
-                                delim = ";") %>%
+                                delim = ";",
+                                cols_remove=remove) %>%
     mutate(across(c("d", "p", "c", "o", "f", "g", "s"), ~ gsub("[dpcofgs]__","", .))) %>%
     rename_with(~ case_when(
       . == "d" ~ "Domain",
