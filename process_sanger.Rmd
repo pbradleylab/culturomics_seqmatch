@@ -1,0 +1,168 @@
+---
+title: "Sanger notebook"
+output: html_notebook
+---
+
+Sample notebook to process input reads and save both output FASTAs and quality plots. First, load and default-trim data:
+
+```{r load, echo=TRUE, results='hide', message=FALSE}
+library(tidyverse)
+library(kableExtra)
+source("process_sanger_functions.R")
+
+log <- capture.output(
+  trimmed <- load_and_trim(data_dir = "./seqs",
+                           fn_remove = c("Christian_",
+                                         "515F_718447_",
+                                         ".ab1"),
+                           TrimmingMethod = "M2"),
+  type="message"
+)
+
+```
+
+If you have any adjustments, run the block below - otherwise, skip for now.
+
+```{r adjust}
+
+# To adjust reads based on the output above, modify the below code. Saving this as a new notebook allows you to have a record of how you adjusted trimming parameters. After you run this chunk, be sure to re-run the plots above.
+
+adjustments <- TRUE
+if (adjustments) {
+  # example
+  trim_by_M2 <- c("F_F01")
+  for (n in trim_by_M2) {
+    trimmed[[n]] <- sangeranalyseR::updateQualityParam(trimmed[[n]],
+                                                       TrimmingMethod = "M2",
+                                                       M1TrimmingCutoff = NULL,
+                                                       M2CutoffQualityScore = 15,
+                                                       M2SlidingWindowSize = 20)
+  }
+}
+```
+
+
+Now, generate chromatograms and show which regions have been auto-trimmed. If you have adjustments based on this, modify the code above.
+
+
+```{r chromatograms}
+makeChromatogram <- function(x, ...) {
+    sangerseqR::chromatogram(
+    x,
+    trim5 = x@QualityReport@trimmedStartPos,
+    trim3 = x@QualityReport@rawSeqLength - x@QualityReport@trimmedFinishPos,
+    showtrim=TRUE, ...)
+}
+
+for (i in 1:length(trimmed)) {
+  x <- trimmed[[i]]
+  n <- names(trimmed)[i]
+  makeChromatogram(x)
+  mtext(n, side=1, adj=1)
+}
+
+```
+
+Next, create interactive quality plots (optional):
+
+```{r quality}
+
+qc_plots <- htmltools::tagList()
+for (i in 1:length(trimmed)) {
+  qc_plots[[i]] <- 
+    plotly::as_widget(
+      plotly::layout(
+        sangeranalyseR::qualityBasePlot(trimmed[[i]]),
+        title = list(text=names(trimmed)[i], x=.05)
+      )
+    )
+}
+names(qc_plots) <- names(trimmed)
+#qc_plots
+
+```
+
+Finally, write to disk:
+
+```{r output}
+
+out_dir <- "./fasta_output/"
+dir.create(out_dir, showWarnings=FALSE)
+for (i in 1:length(trimmed)) {
+  n <- names(trimmed)[i]
+  x <- trimmed[[i]]
+  x@readFileName <- paste0(n, ".ab1") # Comment out to preserve the original names
+  sangeranalyseR::writeFasta(x, outputDir = out_dir, compress = FALSE)
+}
+Sys.setenv(SANGER_OUT_DIR=file.path(getwd(), out_dir))
+```
+
+
+Search with VSEARCH against database:
+
+```{bash vsearch_run}
+
+ALL_SANGER_OUT="./concat_sanger_out.fa"
+VSEARCH_OUT="./vsearch_output.txt"
+DATABASE="./data/ssu_all.fna"
+VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
+
+# concat
+cat $SANGER_OUT_DIR/*.fa > $ALL_SANGER_OUT
+
+# Run
+$VSEARCH_PATH --usearch_global $ALL_SANGER_OUT --db $DATABASE --id 0.9 --blast6out $VSEARCH_OUT
+
+```
+
+```{r parse_output}
+
+blast6out_headers <- c("qseqid", "sseqid", "pident", "length", "mismatch","gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
+
+vsearch_results <- readr::read_tsv("./vsearch_output.txt",
+                                   col_names=blast6out_headers,
+                                   col_types="ccdddddddddd")
+
+db_metadata <- readr::read_tsv("./data/bac120_metadata.tsv.gz")
+
+vsearch_processed <- vsearch_results %>%
+  filter(length >= 50) %>%
+  filter(pident >= 95) %>%
+  mutate(qseqid = gsub("\\.ab1", "", qseqid)) %>%
+  group_by(qseqid) %>%
+  slice_max(tibble(pident, length), n=1) %>%
+  separate_wider_delim(sseqid, delim="~", names=c("accession","sequence")) %>%
+  left_join(., db_metadata) %>%
+  separate_taxonomy_with_s(taxa_col = gtdb_taxonomy) %>%
+  relocate(qseqid, Family, Species, pident, length)
+
+kableExtra::kbl(vsearch_processed) %>% kable_styling()
+```
+
+```{r visualize_alns}
+
+interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vsearch_processed) {
+  new_cols <- c("rgba(80,120,255,1)", "rgba(80,255,120,1)", "rgba(255,120,80)")
+  l <- plotly::layout(
+    sangeranalyseR::qualityBasePlot(trimmed_list[[name]]),
+    title = list(text=name, x=.05)
+  )
+  components <- map_chr(l$x$data, ~ .x$name)
+  which_trimmed <- which(components=="Trimmed Read")
+
+  aln_read_coords <- dplyr::filter(vsearch, qseqid==name) %>% dplyr::select(Species, qstart, qend)
+  for (i in 1:nrow(aln_read_coords)) {
+    aln_read <- l$x$data[[which_trimmed]]
+    aln_read$name <- paste0("Aligned (", aln_read_coords[i, "Species"][[1]], ")")
+    aln_read$line$color <- new_cols[i]
+    aln_read$x <- aln_read$x[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]
+    aln_read$y <- aln_read$y[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]+(i*3)
+    n_comps <- length(l$x$data)
+    l$x$data[[n_comps + i]] <- aln_read
+  }
+  l
+}
+interactive_alignment("F_F01")
+interactive_alignment("L_D02")
+
+```
