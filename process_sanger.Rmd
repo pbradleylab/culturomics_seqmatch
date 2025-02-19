@@ -30,27 +30,48 @@ If you have any adjustments, run the block below - otherwise, skip for now.
 adjustments <- TRUE
 if (adjustments) {
   # example
-  trim_by_M2 <- c("F_F01")
-  for (n in trim_by_M2) {
-    trimmed[[n]] <- sangeranalyseR::updateQualityParam(trimmed[[n]],
+  trim_by_M1 <- c()#c("D_D01", "G_G01", "N_F02", "O_G02", "Q_A03", "T_D03")
+  for (n in trim_by_M1) {
+    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
+                                                       TrimmingMethod = "M1",
+                                                       M1TrimmingCutoff = 0.001)
+    if ("message" %in% names(new_trimmed)) {
+      message(new_trimmed$message)
+    } else {
+      trimmed[[n]] <- new_trimmed  
+    }
+  }
+  retrim_by_M2_1 <- c("D_D01", "G_G01", "N_F02")
+  for (n in retrim_by_M2_1) {
+    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
                                                        TrimmingMethod = "M2",
-                                                       M1TrimmingCutoff = NULL,
-                                                       M2CutoffQualityScore = 15,
-                                                       M2SlidingWindowSize = 20)
+                                                       M2CutoffQualityScore = 18,
+                                                       M2SlidingWindowSize = 10)
+    if ("message" %in% names(new_trimmed)) {
+      message(new_trimmed$message)
+    } else {
+      trimmed[[n]] <- new_trimmed  
+    }
   }
 }
+
+#trimmed[["D_D01"]] <- sangeranalyseR::updateQualityParam(trimmed[["D_D01"]], TrimmingMethod="M2", M2CutoffQualityScore = 18, M2SlidingWindowSize = 10)
+#makeChromatogram(trimmed[["D_D01"]])
+
 ```
 
 
-Now, generate chromatograms and show which regions have been auto-trimmed. If you have adjustments based on this, modify the code above.
+Now, generate chromatograms and show which regions have been auto-trimmed. If you have adjustments based on this, modify the code above, then re-run this chunk.
 
 
 ```{r chromatograms}
-makeChromatogram <- function(x, ...) {
-    sangerseqR::chromatogram(
+makeChromatogram <- function(x, trim5=NULL, trim3=NULL, ...) {
+  if (is.null(trim5)) { trim5 <- x@QualityReport@trimmedStartPos }
+  if (is.null(trim3)) { trim3 <- x@QualityReport@rawSeqLength - x@QualityReport@trimmedFinishPos }
+  sangerseqR::chromatogram(
     x,
-    trim5 = x@QualityReport@trimmedStartPos,
-    trim3 = x@QualityReport@rawSeqLength - x@QualityReport@trimmedFinishPos,
+    trim5 = trim5,
+    trim3 = trim3,
     showtrim=TRUE, ...)
 }
 
@@ -60,6 +81,32 @@ for (i in 1:length(trimmed)) {
   makeChromatogram(x)
   mtext(n, side=1, adj=1)
 }
+
+```
+
+
+Re-trim any that need manual re-trimming...
+
+```{r manual_trim}
+
+trimmed[["D_D01"]] <- manually_trim(trimmed[["D_D01"]], trim5=100, trim3=121)
+makeChromatogram(trimmed[["D_D01"]], width=50)
+
+trimmed[["G_G01"]] <- manually_trim(trimmed[["G_G01"]], trim5=102, trim3=110)
+makeChromatogram(trimmed[["G_G01"]])
+
+trimmed[["N_F02"]] <- manually_trim(trimmed[["N_F02"]], trim5=105, trim3=110)
+makeChromatogram(trimmed[["N_F02"]])
+
+trimmed[["O_G02"]] <- manually_trim(trimmed[["O_G02"]], trim5=105, trim3=85)
+makeChromatogram(trimmed[["O_G02"]])
+
+# This one just looks contaminated
+trimmed[["Q_A03"]] <- manually_trim(trimmed[["Q_A03"]], trim5=100, trim3=15)
+makeChromatogram(trimmed[["Q_A03"]])
+
+trimmed[["T_D03"]] <- manually_trim(trimmed[["T_D03"]], trim5=120, trim3=120)
+makeChromatogram(trimmed[["T_D03"]])
 
 ```
 
@@ -113,8 +160,8 @@ VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
 # concat
 cat $SANGER_OUT_DIR/*.fa > $ALL_SANGER_OUT
 
-# Run
-$VSEARCH_PATH --usearch_global $ALL_SANGER_OUT --db $DATABASE --id 0.9 --blast6out $VSEARCH_OUT
+# Run with minimum percent ID threshold of 85%
+$VSEARCH_PATH --usearch_global $ALL_SANGER_OUT --db $DATABASE --id 0.85 --blast6out $VSEARCH_OUT
 
 ```
 
@@ -126,11 +173,13 @@ vsearch_results <- readr::read_tsv(vsearch_outfile,
                                    col_names=blast6out_headers,
                                    col_types="ccdddddddddd")
 
-db_metadata <- readr::read_tsv("./data/bac120_metadata.tsv.gz")
+if (!("db_metadata" %in% names(.GlobalEnv))) {
+  db_metadata <- readr::read_tsv("./data/bac120_metadata.tsv.gz")
+}
 
 vsearch_processed <- vsearch_results %>%
   filter(length >= 50) %>%
-  filter(pident >= 95) %>%
+  filter(pident >= 85) %>%
   mutate(qseqid = gsub("\\.ab1", "", qseqid)) %>%
   group_by(qseqid) %>%
   slice_max(tibble(pident, length), n=1) %>%
@@ -140,6 +189,8 @@ vsearch_processed <- vsearch_results %>%
   relocate(qseqid, Family, Species, pident, length)
 
 kableExtra::kbl(vsearch_processed) %>% kable_styling()
+
+write_tsv(vsearch_processed, "vsearch_processed_table.tsv")
 ```
 
 ```{r visualize_alns}
@@ -169,5 +220,5 @@ interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vs
 }
 interactive_alignment("F_F01")
 interactive_alignment("L_D02")
-
+interactive_alignment("R_B03")
 ```

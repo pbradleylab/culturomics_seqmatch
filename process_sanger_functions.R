@@ -58,3 +58,10 @@ separate_taxonomy_with_s <- function(inpt, taxa_col, remove=FALSE) {
     ))
   return(inpt)
 }
+
+manually_trim <- function(sanger_read, trim5=NULL, trim3=NULL) {
+  sanger_read@QualityReport@TrimmingMethod <- "Manual"
+  sanger_read@QualityReport@trimmedFinishPos <- sanger_read@QualityReport@rawSeqLength - trim3
+  sanger_read@QualityReport@trimmedStartPos <- trim5
+  sanger_read
+}
