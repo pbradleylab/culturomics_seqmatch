@@ -181,7 +181,7 @@ if (make_quality_plots) {
 
 Finally, write trimmed alignments to disk:
 
-```{r output}
+```{r output, echo=TRUE, results='hide', message=FALSE}
 
 out_dir <- "./fasta_output/"
 dir.create(out_dir, showWarnings=FALSE)
@@ -252,7 +252,7 @@ if (seq_mode == "16S") {
 } else if (seq_mode == "phylotag") {
   if (!("phylotag_md" %in% names(.GlobalEnv))) {
     phylotag_md <- readr::read_tsv(gtdbtk_assembly_data)
-    bin_md <- readr::read_tsv(bin_to_sample)
+    bin_md <- readr::read_tsv(bin_to_sample) %>% distinct()
     phylo_bin <- left_join(phylotag_md, bin_md, by=c("user_genome"="bin"))
   }
 }
