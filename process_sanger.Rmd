@@ -3,60 +3,67 @@ title: "Sanger notebook"
 output: html_notebook
 ---
 
-Sample notebook to process input reads and save both output FASTAs and quality plots. First, load and default-trim data:
+Sample notebook to process input reads and save both output FASTAs and quality plots. First, set variables for this analysis:
 
-```{r load, echo=TRUE, results='hide', message=FALSE}
+```{r settings}
 library(tidyverse)
 library(kableExtra)
+
+# What type of sequences are these?
+seq_mode <- "16S"
+# seq_mode <- "phylotag"
+
+# Where is the vsearch binary?
+vsearch_path <- "/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
+
+# Directory containing sequences, and how to rename these
+data_dir <- "./seqs/"
+text_to_remove <- c("Christian_", "515F_718447_", ".ab1")
+
+# Metadata
+gtdb_metadata <- "./data/bac120_metadata.tsv.gz"
+gtdbtk_assembly_metadata <- "./data/gtdbtk.bac120.summary.tsv"
+if (seq_mode == "16S") {
+  database <- "./data/ssu_all.fna"
+} else if (seq_mode == "phylotag") {
+  database <- "./data/gyr.fna"
+}
+
+# Output files
+all_sanger_out <- "./concat_sanger_out.fa"
+vsearch_outfile <- "./vsearch_output.txt"
+final_output_tbl <- "./vsearch_processed_table.tsv"
+
+# PhyloTag specific settings:
+#
+# Because PhyloTag hits may not be unique *across* samples, we can be explicit about which samples these Sanger sequences came from.
+which_samples <- c("FF08034199", "FF08034332", "FF08034525")
+# Otherwise:
+# which_samples <- NULL
+# If your sequences are named in a way that is not helpful, you can use a regex to transform them
+phylotag_regex <- c(pattern="^(DS[[:digit:]]+_group_[[:digit:]]+_bin\\.[[:digit:]]+)_.*",
+                    reference="\\1")
+
+# Set environment variables for the BASH script section
+Sys.setenv(ALL_SANGER_OUT=all_sanger_out)
+Sys.setenv(DATABASE=database)
+Sys.setenv(VSEARCH_PATH=vsearch_path)
+Sys.setenv(SANGER_OUT_DIR=file.path(getwd(), out_dir))
+Sys.setenv(VSEARCH_OUT=vsearch_outfile)
+```
+
+Now, load and default-trim chromatograms. (If you already have sequences, you can skip to section "vsearch_run".) 
+
+```{r load, echo=TRUE, results='hide', message=FALSE}
+
 source("process_sanger_functions.R")
 
 log <- capture.output(
-  trimmed <- load_and_trim(data_dir = "./seqs",
-                           fn_remove = c("Christian_",
-                                         "515F_718447_",
-                                         ".ab1"),
+  trimmed <- load_and_trim(data_dir = data_dir,
+                           fn_remove = text_to_remove,
                            TrimmingMethod = "M2"),
   type="message"
 )
-
-```
-
-If you have any adjustments, run the block below - otherwise, skip for now.
-
-```{r adjust}
-
-# To adjust reads based on the output above, modify the below code. Saving this as a new notebook allows you to have a record of how you adjusted trimming parameters. After you run this chunk, be sure to re-run the plots above.
-
-adjustments <- TRUE
-if (adjustments) {
-  # example
-  trim_by_M1 <- c()#c("D_D01", "G_G01", "N_F02", "O_G02", "Q_A03", "T_D03")
-  for (n in trim_by_M1) {
-    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
-                                                       TrimmingMethod = "M1",
-                                                       M1TrimmingCutoff = 0.001)
-    if ("message" %in% names(new_trimmed)) {
-      message(new_trimmed$message)
-    } else {
-      trimmed[[n]] <- new_trimmed  
-    }
-  }
-  retrim_by_M2_1 <- c("D_D01", "G_G01", "N_F02")
-  for (n in retrim_by_M2_1) {
-    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
-                                                       TrimmingMethod = "M2",
-                                                       M2CutoffQualityScore = 18,
-                                                       M2SlidingWindowSize = 10)
-    if ("message" %in% names(new_trimmed)) {
-      message(new_trimmed$message)
-    } else {
-      trimmed[[n]] <- new_trimmed  
-    }
-  }
-}
-
-#trimmed[["D_D01"]] <- sangeranalyseR::updateQualityParam(trimmed[["D_D01"]], TrimmingMethod="M2", M2CutoffQualityScore = 18, M2SlidingWindowSize = 10)
-#makeChromatogram(trimmed[["D_D01"]])
 
 ```
 
@@ -110,26 +117,69 @@ makeChromatogram(trimmed[["T_D03"]])
 
 ```
 
-Next, create interactive quality plots (optional):
 
-```{r quality}
+You can also re-trim using other methods if you feel it is appropriate (by default, disabled):
 
-qc_plots <- htmltools::tagList()
-for (i in 1:length(trimmed)) {
-  qc_plots[[i]] <- 
-    plotly::as_widget(
-      plotly::layout(
-        sangeranalyseR::qualityBasePlot(trimmed[[i]]),
-        title = list(text=names(trimmed)[i], x=.05)
-      )
-    )
+```{r adjust}
+
+# To adjust reads based on the output above, modify the below code. Saving this as a new notebook allows you to have a record of how you adjusted trimming parameters. After you run this chunk, be sure to re-run the plots above.
+
+adjustments <- FALSE
+if (adjustments) {
+  # example
+  trim_by_M1 <- c()#c("D_D01", "G_G01", "N_F02", "O_G02", "Q_A03", "T_D03")
+  for (n in trim_by_M1) {
+    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
+                                                       TrimmingMethod = "M1",
+                                                       M1TrimmingCutoff = 0.001)
+    if ("message" %in% names(new_trimmed)) {
+      message(new_trimmed$message)
+    } else {
+      trimmed[[n]] <- new_trimmed  
+    }
+  }
+  retrim_by_M2_1 <- c("D_D01", "G_G01", "N_F02")
+  for (n in retrim_by_M2_1) {
+    new_trimmed <- sangeranalyseR::updateQualityParam(trimmed[[n]],
+                                                       TrimmingMethod = "M2",
+                                                       M2CutoffQualityScore = 18,
+                                                       M2SlidingWindowSize = 10)
+    if ("message" %in% names(new_trimmed)) {
+      message(new_trimmed$message)
+    } else {
+      trimmed[[n]] <- new_trimmed  
+    }
+  }
 }
-names(qc_plots) <- names(trimmed)
-#qc_plots
+
+#trimmed[["D_D01"]] <- sangeranalyseR::updateQualityParam(trimmed[["D_D01"]], TrimmingMethod="M2", M2CutoffQualityScore = 18, M2SlidingWindowSize = 10)
+#makeChromatogram(trimmed[["D_D01"]])
 
 ```
 
-Finally, write to disk:
+Optionally, create quality plots (disabled by default as these take up a lot of memory):
+
+```{r quality}
+
+make_quality_plots <- FALSE
+if (make_quality_plots) {
+  qc_plots <- htmltools::tagList()
+  for (i in 1:length(trimmed)) {
+    qc_plots[[i]] <- 
+      plotly::as_widget(
+        plotly::layout(
+          sangeranalyseR::qualityBasePlot(trimmed[[i]]),
+          title = list(text=names(trimmed)[i], x=.05)
+        )
+      )
+  }
+  names(qc_plots) <- names(trimmed)
+  qc_plots
+}
+
+```
+
+Finally, write trimmed alignments to disk:
 
 ```{r output}
 
@@ -141,21 +191,19 @@ for (i in 1:length(trimmed)) {
   x@readFileName <- paste0(n, ".ab1") # Comment out to preserve the original names
   sangeranalyseR::writeFasta(x, outputDir = out_dir, compress = FALSE)
 }
-Sys.setenv(SANGER_OUT_DIR=file.path(getwd(), out_dir))
-vsearch_outfile = "./vsearch_output.txt"
-Sys.setenv(VSEARCH_OUT=vsearch_outfile)
+
 ```
 
 
-Search with VSEARCH against database:
+Search with vsearch against database:
 
 ```{bash vsearch_run}
 
-ALL_SANGER_OUT="./concat_sanger_out.fa"
-#This is now set above
+#These variables is now set above; uncomment if you want to override
+#ALL_SANGER_OUT="./concat_sanger_out.fa"
 #VSEARCH_OUT="./vsearch_output.txt"
-DATABASE="./data/ssu_all.fna"
-VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
+#DATABASE="./data/ssu_all.fna"
+#VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
 
 # concat
 cat $SANGER_OUT_DIR/*.fa > $ALL_SANGER_OUT
@@ -165,6 +213,30 @@ $VSEARCH_PATH --usearch_global $ALL_SANGER_OUT --db $DATABASE --id 0.85 --blast6
 
 ```
 
+
+This shows an alternative running on some phylotag test data:
+
+```{bash vsearch_run_phylotag_test}
+
+#These variables is now set above; uncomment if you want to override
+#ALL_SANGER_OUT="./concat_sanger_out.fa"
+VSEARCH_OUT="./vsearch_output_phylotag.txt"
+DATABASE="./data/gyr.fna"
+#VSEARCH_PATH="/Users/bradley.720/miniforge3/envs/culturomics/bin/vsearch"
+
+
+# Run with minimum percent ID threshold of 85%
+$VSEARCH_PATH --usearch_global "./test_sequences.txt" --db $DATABASE --id 0.85 --blast6out $VSEARCH_OUT
+
+# After running this test case, be sure to run in R:
+#
+# vsearch_output <- "./vsearch_output_phylotag.txt"
+# seq_mode <- "phylotag"
+
+```
+
+Next, read in the vsearch output and analyze it:
+
 ```{r parse_output}
 
 blast6out_headers <- c("qseqid", "sseqid", "pident", "length", "mismatch","gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
@@ -173,52 +245,47 @@ vsearch_results <- readr::read_tsv(vsearch_outfile,
                                    col_names=blast6out_headers,
                                    col_types="ccdddddddddd")
 
-if (!("db_metadata" %in% names(.GlobalEnv))) {
-  db_metadata <- readr::read_tsv("./data/bac120_metadata.tsv.gz")
+if (seq_mode == "16S") {
+  if (!("db_metadata" %in% names(.GlobalEnv))) {
+    db_metadata <- readr::read_tsv(gtdb_metadata)
+  }
+} else if (seq_mode == "phylotag") {
+  if (!("phylotag_md" %in% names(.GlobalEnv))) {
+    phylotag_md <- readr::read_tsv(gtdbtk_assembly_data)
+    bin_md <- readr::read_tsv(bin_to_sample)
+    phylo_bin <- left_join(phylotag_md, bin_md, by=c("user_genome"="bin"))
+  }
 }
 
+# match columns as appropriate to the database
+if (seq_mode == "16S") {
+  vsearch_results <- vsearch_results %>%
+    separate_wider_delim(sseqid, delim="~", names=c("accession","sequence")) %>%
+    left_join(., db_metadata) %>%
+    separate_taxonomy_with_s(taxa_col = gtdb_taxonomy) %>%
+    relocate(qseqid, Family, Species, pident, length)
+} else {
+  vsearch_results <- vsearch_results %>%
+    mutate(user_genome = gsub(phylotag_regex[["pattern"]],
+                              phylotag_regex[["reference"]],
+                              sseqid)) %>%
+    left_join(., phylo_bin) %>%
+    separate_taxonomy_with_s(taxa_col = classification) %>%
+    relocate(qseqid, Family, Species, sample, user_genome, pident, length)
+  if (!is.null(which_samples)) {
+    vsearch_results <- filter(vsearch_results, sample %in% which_samples)
+  }
+}
+
+# whittle down results
 vsearch_processed <- vsearch_results %>%
   filter(length >= 50) %>%
-  filter(pident >= 85) %>%
+  filter(pident >= 90) %>%
   mutate(qseqid = gsub("\\.ab1", "", qseqid)) %>%
   group_by(qseqid) %>%
-  slice_max(tibble(pident, length), n=1) %>%
-  separate_wider_delim(sseqid, delim="~", names=c("accession","sequence")) %>%
-  left_join(., db_metadata) %>%
-  separate_taxonomy_with_s(taxa_col = gtdb_taxonomy) %>%
-  relocate(qseqid, Family, Species, pident, length)
-
+  slice_max(tibble(pident, length), n=1)
 kableExtra::kbl(vsearch_processed) %>% kable_styling()
 
-write_tsv(vsearch_processed, "vsearch_processed_table.tsv")
+write_tsv(vsearch_processed, final_output_tbl)
 ```
 
-```{r visualize_alns}
-
-interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vsearch_processed) {
-  # maximum three tied alignments
-  new_cols <- c("rgba(80,120,255,1)", "rgba(80,255,120,1)", "rgba(255,120,80)")
-  l <- plotly::layout(
-    sangeranalyseR::qualityBasePlot(trimmed_list[[name]]),
-    title = list(text=name, x=.05)
-  )
-  components <- map_chr(l$x$data, ~ .x$name)
-  which_trimmed <- which(components=="Trimmed Read")
-
-  aln_read_coords <- dplyr::filter(vsearch, qseqid==name)
-  for (i in 1:(min(3, nrow(aln_read_coords)))) {
-    aln_read <- l$x$data[[which_trimmed]]
-    aln_read$name <- paste0("Aligned (", aln_read_coords[i, "Species"][[1]], ")")
-    aln_read$line$color <- new_cols[i]
-    aln_read$x <- aln_read$x[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]
-    aln_read$y <- aln_read$y[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]+(i*3)
-    aln_read$text <- rep(paste0(aln_read_coords[["pident"]][i], "% ID<br>", aln_read_coords[["gtdb_taxonomy"]][i]), length(aln_read$x))
-    n_comps <- length(l$x$data)
-    l$x$data[[n_comps + i]] <- aln_read
-  }
-  l
-}
-interactive_alignment("F_F01")
-interactive_alignment("L_D02")
-interactive_alignment("R_B03")
-```

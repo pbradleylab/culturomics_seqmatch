@@ -65,3 +65,29 @@ manually_trim <- function(sanger_read, trim5=NULL, trim3=NULL) {
   sanger_read@QualityReport@trimmedStartPos <- trim5
   sanger_read
 }
+
+
+
+interactive_alignment <- function(name="F_F01", trimmed_list=trimmed, vsearch=vsearch_processed) {
+  # maximum three tied alignments
+  new_cols <- c("rgba(80,120,255,1)", "rgba(80,255,120,1)", "rgba(255,120,80)")
+  l <- plotly::layout(
+    sangeranalyseR::qualityBasePlot(trimmed_list[[name]]),
+    title = list(text=name, x=.05)
+  )
+  components <- map_chr(l$x$data, ~ .x$name)
+  which_trimmed <- which(components=="Trimmed Read")
+  
+  aln_read_coords <- dplyr::filter(vsearch, qseqid==name)
+  for (i in 1:(min(3, nrow(aln_read_coords)))) {
+    aln_read <- l$x$data[[which_trimmed]]
+    aln_read$name <- paste0("Aligned (", aln_read_coords[i, "Species"][[1]], ")")
+    aln_read$line$color <- new_cols[i]
+    aln_read$x <- aln_read$x[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]
+    aln_read$y <- aln_read$y[aln_read_coords[i, "qstart"][[1]] : aln_read_coords[i, "qend"][[1]]]+(i*3)
+    aln_read$text <- rep(paste0(aln_read_coords[["pident"]][i], "% ID<br>", aln_read_coords[["gtdb_taxonomy"]][i]), length(aln_read$x))
+    n_comps <- length(l$x$data)
+    l$x$data[[n_comps + i]] <- aln_read
+  }
+  l
+}
